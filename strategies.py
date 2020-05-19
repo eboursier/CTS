@@ -64,11 +64,11 @@ class CUCBKLPath(BanditAlgo):
 
     def action(self):
         self.t += 1
-        return self.oracle.action([self.inv_kl[i] for i in range(self.n)])
+        return self.oracle.action([self.inv_kl(i) for i in range(self.n)])
 
     def kl(self, x, y):
-        x = np.min(np.max(x, self.eps), 1 - self.eps)
-        y = np.min(np.max(y, self.eps), 1 - self.eps)
+        x = np.clip(x, self.eps, 1 - self.eps)
+        y = np.clip(y, self.eps, 1 - self.eps)
         return x * np.log(x / y) + (1 - x) * np.log((1 - x) / (1 - y))
 
     def inv_kl(self, i):
@@ -78,7 +78,7 @@ class CUCBKLPath(BanditAlgo):
         val = self.means[i] # approximation by below
         u = 0 # approximation by above (negative means)
         _iter = 0
-        while iter < self.max_iter and u-val > self.precision: # look for the largest x such that N_i kl(mean_i, x) < beta*log(t)
+        while _iter < self.max_iter and u-val > self.precision: # look for the largest x such that N_i kl(mean_i, x) < beta*log(t)
             _iter += 1
             m = (val + u)/2
             if self.kl(1+self.means[i], 1+m) > self.delta(self.t)/self.N[i]:
@@ -103,10 +103,10 @@ class CTSBetaPath(BanditAlgo):
     """
     Implement CTS-Beta algorithm for shortest path algorithm (has to deal with negative means)
     """
-    def __init__(self, oracle, n, init_count=1, a=1, b=1):
+    def __init__(self, n, oracle, init_count=1):
         super().__init__("Optimistic CTS-Beta")
-        self.a = a*np.ones(n)
-        self.b = b*np.ones(n)
+        self.a = np.ones(n)
+        self.b = np.ones(n)
         self.n = n
         self.init_count = init_count # in itialization as long as all arms have not been pulled init_count times
         self.init = True # True if we are still initialization
@@ -117,8 +117,8 @@ class CTSBetaPath(BanditAlgo):
     def update(self, plays, feedback):
         N = self.N[plays]
         self.means[plays] = (self.means[plays]*N + feedback)/(N+1) # update empirical mean
-        self.a[feedback==-1] += 1 # update posterior (negative rewards)
-        self.b[feedback==0] += 1 # update posterior
+        self.a[plays[feedback==-1]] += 1 # update posterior (negative rewards)
+        self.b[plays[feedback==0]] += 1 # update posterior
         self.N[plays] += 1 # update the counters
 
         if self.init:
@@ -129,60 +129,68 @@ class CTSBetaPath(BanditAlgo):
             theta = (self.N<self.init_count)-1 # ensure that the oracle will pull arms that have not been pulled enough yet.
         else:
             theta = -np.random.beta(self.a, self.b) # beta sample
-            theta = np.max(theta, self.means) # optimistic sampling
-        self.t += 1
-        return self.oracle.action(theta)
-
-
-class CTSGaussian(BanditAlgo):
-    """
-    Implement CTS-Gaussian algorithm with its specific update rule.
-    CTS-Gaussian is here implemented to handle non independent prior for generality reasons.
-    """
-    def __init__(self, means, cov, oracle, init_count=1):
-        super().__init__("CTS-Gaussian") 
-        self.init_means = means
-        self.subg_matrix = cov # subgaussianity matrix
-        self.means = means
-        self.cov = np.zeros_like(cov)
-        self.oracle = oracle # the reward function and action sets are 'specified' in the oracle
-        self.init_count = init_count # in itialization as long as all arms have not been pulled init_count times
-        self.init = True # True if we are still initialization
-        self.t = 0 # timestep of algo
-        self.N = np.zeros((len(means), len(means))) # n_ij is the number of times i,j got played together
-
-    def update(self, plays, feedback):
-        """
-        Update the posterior distribution after playing plays and receiving feedback = X[plays]
-        """
-
-        N = self.N[np.meshgrid(plays, plays)]
-        self.means[plays] = (self.means[plays]*np.diag(N) + feedback)/(np.diag(N)+1) # update empirical mean
-        # sigma_ij = gamma_ij n_ij / (n_i n_j) here in the non independent case (does not change the diagonal terms in independent case)
-        self.cov[np.meshgrid(plays, plays)] = self.subg_matrix[np.meshgrid(plays, plays)] * (np.diag(1/(np.diag(N)+1)) @ (N+1) @ np.diag(1/(np.diag(N)+1))) # update covariance matrix
-        self.N[np.meshgrid(plays, plays)] += 1 # update the counters
-
-        if self.init:
-            self.init = np.sum(np.diag(self.N)<self.init_count) >= 1 # end init. if all arms have been pulled at least init_count times
-    
-    def action(self):
-        """
-        Return Oracle(theta_t).
-        """
-        if self.init:
-            # watch out !!! in very specific cases, the following line might not be sufficient to ensure the initialization is complete
-            theta = (np.diag(self.N)<self.init_count)+0 # ensure that the oracle will pull arms that have not been pulled enough yet.
-        else:
-            theta = np.random.multivariate_normal(self.means, self.cov)
+            theta = np.max((theta, self.means), axis=0) # optimistic sampling
         self.t += 1
         return self.oracle.action(theta)
 
     def reset(self):
-        self.N = np.zeros((len(self.means), len(self.means)))
-        self.means = np.copy(self.init_means)
-        self.cov = np.zeros_like(self.cov)
+        self.N = np.zeros(self.n)
+        self.means = np.zeros(self.n)
+        self.a = np.ones(self.n)
+        self.b = np.ones(self.n)
         self.init = True
         self.t = 0
+
+
+# class CTSGaussian(BanditAlgo):
+#     """
+#     Implement CTS-Gaussian algorithm with its specific update rule.
+#     CTS-Gaussian is here implemented to handle non independent prior for generality reasons.
+#     """
+#     def __init__(self, means, cov, oracle, init_count=1):
+#         super().__init__("CTS-Gaussian") 
+#         self.init_means = means
+#         self.subg_matrix = cov # subgaussianity matrix
+#         self.means = means
+#         self.cov = np.zeros_like(cov)
+#         self.oracle = oracle # the reward function and action sets are 'specified' in the oracle
+#         self.init_count = init_count # in itialization as long as all arms have not been pulled init_count times
+#         self.init = True # True if we are still initialization
+#         self.t = 0 # timestep of algo
+#         self.N = np.zeros((len(means), len(means))) # n_ij is the number of times i,j got played together
+
+#     def update(self, plays, feedback):
+#         """
+#         Update the posterior distribution after playing plays and receiving feedback = X[plays]
+#         """
+
+#         N = self.N[np.meshgrid(plays, plays)]
+#         self.means[plays] = (self.means[plays]*np.diag(N) + feedback)/(np.diag(N)+1) # update empirical mean
+#         # sigma_ij = gamma_ij n_ij / (n_i n_j) here in the non independent case (does not change the diagonal terms in independent case)
+#         self.cov[np.meshgrid(plays, plays)] = self.subg_matrix[np.meshgrid(plays, plays)] * (np.diag(1/(np.diag(N)+1)) @ (N+1) @ np.diag(1/(np.diag(N)+1))) # update covariance matrix
+#         self.N[np.meshgrid(plays, plays)] += 1 # update the counters
+
+#         if self.init:
+#             self.init = np.sum(np.diag(self.N)<self.init_count) >= 1 # end init. if all arms have been pulled at least init_count times
+    
+#     def action(self):
+#         """
+#         Return Oracle(theta_t).
+#         """
+#         if self.init:
+#             # watch out !!! in very specific cases, the following line might not be sufficient to ensure the initialization is complete
+#             theta = (np.diag(self.N)<self.init_count)+0 # ensure that the oracle will pull arms that have not been pulled enough yet.
+#         else:
+#             theta = np.random.multivariate_normal(self.means, self.cov)
+#         self.t += 1
+#         return self.oracle.action(theta)
+
+#     def reset(self):
+#         self.N = np.zeros((len(self.means), len(self.means)))
+#         self.means = np.copy(self.init_means)
+#         self.cov = np.zeros_like(self.cov)
+#         self.init = True
+#         self.t = 0
 
 
 class clipCTSGaussian(BanditAlgo):
@@ -275,7 +283,7 @@ class ESCBCompleteMatching(BanditAlgo):
             match = [(self.left[i], right[i]) for i in len(self.m)] # check for all possible matchings
             plays = self.matching_to_indices(match)
             val = np.sum(self.means[plays]) + np.sqrt(2*self.delta(self.t)*np.sum(self.cov[np.meshgrid(plays, plays)])) # upper confidence bound for this matching
-            if val > max_val
+            if val > max_val:
                 max_val = val
                 max_match = plays
         return max_match

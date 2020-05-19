@@ -96,7 +96,7 @@ class PathReward(Reward):
         """
         if not(self.is_path(plays)):
             raise ValueError('The action has to be a path from {} to {}'.format(self.source, self.target)) 
-        return np.sum(-X[plays]) # negative reward to keep a maximization problem
+        return np.sum(X[plays])
 
     def is_path(self, plays):
         """
@@ -105,25 +105,25 @@ class PathReward(Reward):
         edges = [self.ind_dict[p] for p in plays]
         path = [self.source]
         for i in range(len(edges)):
-            path.append(self.successor(p[i], z[i]))
+            path.append(self.successor(edges[i], path[i]))
         return (nx.algorithms.simple_paths.is_simple_path(self.graph, path) and path[-1]==self.target)
         
     def feedback(self, X, plays):
         """
         return the list of reward along the path
         """
-        return -X[plays]
+        return X[plays]
 
     def successor(self, u, predecessor):
         """
         for an edge (u,v), return the node u or v that is not predecessor. Useful to convert sequence of undirected edges to a path.
         """
-    if u[0]==predecessor:
-        return u[1]
-    elif u[1]==predecessor:
-        return u[0]
-    else:
-        raise ValueError('edge has to link predecessor with some successor')
+        if u[0]==predecessor:
+            return u[1]
+        elif u[1]==predecessor:
+            return u[0]
+        else:
+            raise ValueError('edge has to link predecessor with some successor')
 
 
 class Oracle():
@@ -173,6 +173,7 @@ class MaxMatching(Oracle):
         match = nx.matching.max_weight_matching(self.graph, maxcardinality=True)
         return self.matching_to_indices(match)
 
+
 class ShortestPathOracle(Oracle):
     """
     Oracle returning the shortest path in a weighted graph.
@@ -195,7 +196,7 @@ class ShortestPathOracle(Oracle):
 
     def action(self, X):
         for i, (u,v) in enumerate(self.graph.edges):
-            self.graph[u][v]['weight'] = np.max(-X[i], 0) # generate graph with weights given by -X
+            self.graph[u][v]['weight'] = np.maximum(-X[i], 0) # generate graph with weights given by -X
         path = nx.dijkstra_path(self.graph, self.source, self.target)
         return self.path_to_indices(path)
 
