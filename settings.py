@@ -150,7 +150,7 @@ class LinearFixedSizeOracle(Oracle):
         return np.argpartition(X, -self.m)[-self.m:]
 
 
-class MaxMatching(Oracle):
+class MaxMatchingOracle(Oracle):
     """
     Oracle returning the maximal matching of a bipartite graph.
     """
@@ -159,6 +159,8 @@ class MaxMatching(Oracle):
         if not(nx.bipartite.is_bipartite(g)): # need a bipartite graph
             raise ValueError("The induced graph has to be bipartite.")
         self.graph = g.copy()
+        left, right = nx.bipartite.sets(self.graph)
+        self.m = min(len(left), len(right))
         self.edge_dict = {}
         for i, (u,v) in enumerate(self.graph.edges):
             self.edge_dict[np.min((u,v)),np.max((u,v))] = i
@@ -169,7 +171,7 @@ class MaxMatching(Oracle):
 
     def action(self, X):
         for i, (u,v) in enumerate(self.graph.edges):
-            self.graph[u][v]['weight'] = X[i]
+            self.graph[u][v]['weight'] = np.minimum(X[i], self.m*100) # deal with infinite weights
         match = nx.matching.max_weight_matching(self.graph, maxcardinality=True)
         return self.matching_to_indices(match)
 

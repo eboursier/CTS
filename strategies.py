@@ -256,15 +256,16 @@ class ESCBCompleteMatching(BanditAlgo):
     def __init__(self, g, cov):
         super().__init__("ESCB")
         self.n = len(g.edges)
+        self.graph = g.copy()
         self.left, self.right = nx.bipartite.sets(self.graph)
-        self.m = min(len(left), len(right))
+        self.left, self.right = list(self.left), list(self.right)
+        self.m = min(len(self.left), len(self.right))
         self.means = np.zeros(self.n) # empirical mean
         self.N = np.zeros((self.n,self.n)) # n_ij is the number of times that i and j got simultaneously pulled
         self.t = 0
-        self.delta = lambda t:np.log(t) + (self.m + 2)*np.log(np.log(t)) + 0.5*self.m*np.log(1+np.e) # used for the confidence bound
+        self.delta = lambda t:np.maximum(np.log(t) + (self.m + 2)*np.log(np.log(t)) + 0.5*self.m*np.log(1+np.e), 1) # used for the confidence bound
         self.subg_matrix = cov # subgaussian parameter (1/2 for variables in [0,1], 1 for gaussian with variance 1)
-        self.cov = np.inf*np.ones_like(cov)
-        self.graph = g.copy()
+        self.cov = np.diag(np.inf*np.ones(self.n))
         self.edge_dict = {}
         for i, (u,v) in enumerate(self.graph.edges):
             self.edge_dict[np.min((u,v)),np.max((u,v))] = i
@@ -279,8 +280,10 @@ class ESCBCompleteMatching(BanditAlgo):
         """
         self.t += 1
         max_val = -np.inf
+        max_match = None
         for i, right in enumerate(itertools.permutations(self.right)):
-            match = [(self.left[i], right[i]) for i in len(self.m)] # check for all possible matchings
+            right = list(right)
+            match = [(self.left[i], right[i]) for i in range(self.m)] # check for all possible matchings
             plays = self.matching_to_indices(match)
             val = np.sum(self.means[plays]) + np.sqrt(2*self.delta(self.t)*np.sum(self.cov[np.meshgrid(plays, plays)])) # upper confidence bound for this matching
             if val > max_val:
@@ -297,8 +300,8 @@ class ESCBCompleteMatching(BanditAlgo):
     def reset(self):
         self.t = 0
         self.means = np.zeros(self.n)
-        self.N = np.zeros(self.n)
-        self.cov = np.inf*np.ones_like(self.subg_matrix)
+        self.N = np.zeros((self.n, self.n))
+        self.cov = np.diag(np.inf*np.ones(self.n))
 
 if __name__=='__main__':
     pass
