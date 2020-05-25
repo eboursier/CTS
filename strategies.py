@@ -30,7 +30,7 @@ class CUCB(BanditAlgo):
         self.oracle = oracle
         self.t = 0
         self.delta = delta # used for the confidence bound
-        self.sigma = sigma # subgaussian parameter (1/2 for variables in [0,1], 1 for gaussian with variance 1)
+        self.sigma = sigma # subgaussian parameter (1/2 for variables in [0,1], 1 for gaussian with standard variation 1)
 
     def action(self):
         self.t += 1
@@ -103,8 +103,12 @@ class CTSBetaPath(BanditAlgo):
     """
     Implement CTS-Beta algorithm for shortest path algorithm (has to deal with negative means)
     """
-    def __init__(self, n, oracle, init_count=1):
-        super().__init__("Optimistic CTS-Beta")
+    def __init__(self, n, oracle, init_count=1, optimistic=True):
+        if optimistic:
+            super().__init__("Optimistic CTS-Beta")
+        else:
+            super().__init__("CTS-Beta")
+        self.optimistic = optimistic
         self.a = np.ones(n)
         self.b = np.ones(n)
         self.n = n
@@ -129,7 +133,8 @@ class CTSBetaPath(BanditAlgo):
             theta = (self.N<self.init_count)-1 # ensure that the oracle will pull arms that have not been pulled enough yet.
         else:
             theta = -np.random.beta(self.a, self.b) # beta sample
-            theta = np.max((theta, self.means), axis=0) # optimistic sampling
+            if self.optimistic:
+                theta = np.max((theta, self.means), axis=0) # optimistic sampling
         self.t += 1
         return self.oracle.action(theta)
 
@@ -210,6 +215,8 @@ class clipCTSGaussian(BanditAlgo):
         self.t = 0 # timestep of algo
         self.N = np.zeros(len(means)) # n_ij is the number of times i,j got played together
         self.subg_var = np.diag(cov)
+        if not(np.all(np.linalg.eigvals(cov) >= -1e-20)):
+            raise ValueError("The covariance matrix is not positive.")
         self.cov = np.zeros(len(means)) # diagonal of the covariance of Theta
         self.delta = delta
         self.sigma = sigma
@@ -246,6 +253,60 @@ class clipCTSGaussian(BanditAlgo):
         self.init = True
         self.t = 0
 
+class clipCTSGaussianPath(BanditAlgo):
+    """
+    Implement CTS-Gaussian algorithm with its specific update rule for shortest path problem.
+    CTS-Gaussian implemented for INDEPENDENT prior only (for speed up of the algo). See (commented) version above for general algo.
+    """
+    def __init__(self, means, cov, oracle, init_count=1, sigma=1, delta=lambda t:max(1, np.log(t)+3*np.log(np.log(t)))):
+        if not(np.allclose(np.diag(np.diag(cov)),cov)):
+            raise ValueError('The Subgaussian Matrix has to be diagonal') # in practice, we might prefer to "diagonalize" and regularize cov at this step. Can be easily modified
+        super().__init__("Clip CTS-Gaussian")
+        self.init_means = means
+        self.means = means
+        self.oracle = oracle # the reward function and action sets are 'specified' in the oracle
+        self.init_count = init_count # in itialization as long as all arms have not been pulled init_count times
+        self.init = True # True if we are still initialization
+        self.t = 0 # timestep of algo
+        self.N = np.zeros(len(means)) # n_ij is the number of times i,j got played together
+        self.subg_var = np.diag(cov)
+        if not(np.all(np.linalg.eigvals(cov) >= -1e-20)):
+            raise ValueError("The covariance matrix is not positive.")
+        self.cov = np.zeros(len(means)) # diagonal of the covariance of Theta
+        self.delta = delta
+        self.sigma = sigma
+
+    def update(self, plays, feedback):
+        """
+        Update the posterior distribution after playing plays and receiving feedback = X[plays]
+        """
+        N = self.N[plays]
+        self.means[plays] = (self.means[plays]*N + feedback)/(N+1) # update empirical mean
+        self.cov[plays] = self.subg_var[plays]/(N+1) # update variances
+        self.N[plays] += 1 # update the counters
+
+        if self.init:
+            self.init = np.sum(self.N<self.init_count) >= 1 # end init. if all arms have been pulled at least init_count times
+
+    def action(self):
+        """
+        Return Oracle(theta_t).
+        """
+        self.t += 1
+        if self.init:
+            theta = (self.N<self.init_count)-1 # ensure that the oracle will pull arms that have not been pulled enough yet.
+        else:
+            theta = np.random.multivariate_normal(self.means, np.diag(self.cov)) # independent prior here
+            theta = np.clip(theta, self.means, self.means + self.sigma*np.sqrt(2*self.delta(self.t)/self.N))
+        return self.oracle.action(theta)
+
+    def reset(self):
+        self.N = np.zeros(len(self.means))
+        self.means = np.copy(self.init_means)
+        self.cov = np.zeros_like(self.cov)
+        self.init = True
+        self.t = 0
+
 ######## ESCB
 
 class ESCBCompleteMatching(BanditAlgo):
@@ -253,7 +314,7 @@ class ESCBCompleteMatching(BanditAlgo):
     ESCB algo for matching problem when the bipartite graph is a complete graph. 
     Warning ! It has a combinatorial complexity and can not manage large number of arms.
     """
-    def __init__(self, g, cov):
+    def __init__(self, g, cov, delta = lambda t:np.maximum(np.log(t) + (len(g.edges)/2 + 2)*np.log(np.log(t)) + len(g.edges)/4*np.log(1+np.e), 1)):
         super().__init__("ESCB")
         self.n = len(g.edges)
         self.graph = g.copy()
@@ -263,8 +324,10 @@ class ESCBCompleteMatching(BanditAlgo):
         self.means = np.zeros(self.n) # empirical mean
         self.N = np.zeros((self.n,self.n)) # n_ij is the number of times that i and j got simultaneously pulled
         self.t = 0
-        self.delta = lambda t:np.maximum(np.log(t) + (self.m + 2)*np.log(np.log(t)) + 0.5*self.m*np.log(1+np.e), 1) # used for the confidence bound
+        self.delta = delta # used for the confidence bound
         self.subg_matrix = cov # subgaussian parameter (1/2 for variables in [0,1], 1 for gaussian with variance 1)
+        if not(np.all(np.linalg.eigvals(cov) >= -1e-20)):
+            raise ValueError("The covariance matrix is not positive.")
         self.cov = np.diag(np.inf*np.ones(self.n))
         self.edge_dict = {}
         for i, (u,v) in enumerate(self.graph.edges):
