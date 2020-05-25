@@ -19,5 +19,8 @@ strategies.py provides classes for different algorithms.
 
 utils.py provides some additional useful functions.
 
+## Shortest path dataset
+For the shortest path problem, we used the road chesapeake from "The Network Data Repository with Interactive Graph Analytics and Visualization".
+
 ## Further info
 If you need the exact data generated in the paper or more information, please do not hesitate to send me an email on the address given on my personal website (https://eboursier.github.io/).
