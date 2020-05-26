@@ -2,6 +2,7 @@ from __future__ import print_function
 import numpy as np
 import os
 import networkx as nx
+import time
 
 def potential_paths_from_source_to_target(G, source, target):
     """
@@ -43,6 +44,43 @@ def simu(mab, rew, oracle, algo, horizon):
 
     baseline = rew.reward(mab.means, oracle.action(mab.means)) # the best achievable reward per timestep
     return (np.cumsum(baseline-reward), pulls)
+
+def runtime(mab, rew, oracle, algo, horizon):
+    """
+    Returns the average time for the algo to compute algo.action() and algo.update().
+    """
+    try:
+        if algo.init:
+            check_init = True
+        else:
+            check_init = False
+    except AttributeError:
+        check_init = False
+    if check_init:
+        X = mab.simu(steps=2*horizon) # generated statistics
+    else:
+        X = mab.simu(steps=horizon)
+    n=0
+    t=0
+    actiontime = 0.
+    updatetime = 0.
+    while n<horizon: # n is the number of timesteps after the initialization (we do not count the initialisation)
+        _actiontime = time.time()
+        plays = algo.action() # arms pulled
+        if not(check_init):
+            actiontime += time.time() - _actiontime
+        feedback = rew.feedback(X[t], plays) # semi bandit feedback
+        _updatetime = time.time()
+        algo.update(plays, feedback)  # update algo
+        if not(check_init):
+            updatetime += time.time() - _updatetime
+            n += 1
+        if check_init:
+            check_init = algo.init
+        t += 1
+
+    return actiontime/n, updatetime/n
+
 
 if __name__ == '__main__':
     pass

@@ -203,10 +203,18 @@ class clipCTSGaussian(BanditAlgo):
     Implement CTS-Gaussian algorithm with its specific update rule.
     CTS-Gaussian implemented for INDEPENDENT prior only (for speed up of the algo). See (commented) version above for general algo.
     """
-    def __init__(self, means, cov, oracle, init_count=1, sigma=1, delta=lambda t:max(1, np.log(t)+3*np.log(np.log(t)))):
+    def __init__(self, means, cov, oracle, init_count=1, sigma=1, delta=lambda t:max(1, np.log(t)+3*np.log(np.log(t))), clipping=True, optimistic=True, path=False):
         if not(np.allclose(np.diag(np.diag(cov)),cov)):
             raise ValueError('The Subgaussian Matrix has to be diagonal') # in practice, we might prefer to "diagonalize" and regularize cov at this step. Can be easily modified
-        super().__init__("Clip CTS-Gaussian")
+        if clipping and optimistic:
+            super().__init__("Clip CTS-Gaussian")
+        elif optimistic:
+            super().__init__("Optimistic CTS-Gaussian")
+        else:
+            super().__init__("CTS-Gaussian")
+        self.clipping = clipping
+        self.optimistic = optimistic
+        self.path = path
         self.init_means = means
         self.means = means
         self.oracle = oracle # the reward function and action sets are 'specified' in the oracle
@@ -219,7 +227,7 @@ class clipCTSGaussian(BanditAlgo):
             raise ValueError("The covariance matrix is not positive.")
         self.cov = np.zeros(len(means)) # diagonal of the covariance of Theta
         self.delta = delta
-        self.sigma = sigma
+        self.sigma = 1
 
     def update(self, plays, feedback):
         """
@@ -239,11 +247,16 @@ class clipCTSGaussian(BanditAlgo):
         """
         self.t += 1
         if self.init:
-            # watch out !!! in very specific cases, the following line might not be sufficient to ensure the initialization is complete
-            theta = (self.N<self.init_count)+0 # ensure that the oracle will pull arms that have not been pulled enough yet.
+            if self.path:
+                theta = (self.N<self.init_count)-1
+            else:
+                theta = (self.N<self.init_count)+0 # ensure that the oracle will pull arms that have not been pulled enough yet.
         else:
             theta = np.random.multivariate_normal(self.means, np.diag(self.cov)) # independent prior here
-            theta = np.clip(theta, self.means, self.means + self.sigma*np.sqrt(2*self.delta(self.t)/self.N))
+            if self.clipping and self.optimistic:
+                theta = np.clip(theta, self.means, self.means + self.sigma*np.sqrt(2*self.delta(self.t)/self.N))
+            elif self.optimistic:
+                theta = np.max((theta, self.means), axis=0)
         return self.oracle.action(theta)
 
     def reset(self):
@@ -253,59 +266,6 @@ class clipCTSGaussian(BanditAlgo):
         self.init = True
         self.t = 0
 
-class clipCTSGaussianPath(BanditAlgo):
-    """
-    Implement CTS-Gaussian algorithm with its specific update rule for shortest path problem.
-    CTS-Gaussian implemented for INDEPENDENT prior only (for speed up of the algo). See (commented) version above for general algo.
-    """
-    def __init__(self, means, cov, oracle, init_count=1, sigma=1, delta=lambda t:max(1, np.log(t)+3*np.log(np.log(t)))):
-        if not(np.allclose(np.diag(np.diag(cov)),cov)):
-            raise ValueError('The Subgaussian Matrix has to be diagonal') # in practice, we might prefer to "diagonalize" and regularize cov at this step. Can be easily modified
-        super().__init__("Clip CTS-Gaussian")
-        self.init_means = means
-        self.means = means
-        self.oracle = oracle # the reward function and action sets are 'specified' in the oracle
-        self.init_count = init_count # in itialization as long as all arms have not been pulled init_count times
-        self.init = True # True if we are still initialization
-        self.t = 0 # timestep of algo
-        self.N = np.zeros(len(means)) # n_ij is the number of times i,j got played together
-        self.subg_var = np.diag(cov)
-        if not(np.all(np.linalg.eigvals(cov) >= -1e-20)):
-            raise ValueError("The covariance matrix is not positive.")
-        self.cov = np.zeros(len(means)) # diagonal of the covariance of Theta
-        self.delta = delta
-        self.sigma = sigma
-
-    def update(self, plays, feedback):
-        """
-        Update the posterior distribution after playing plays and receiving feedback = X[plays]
-        """
-        N = self.N[plays]
-        self.means[plays] = (self.means[plays]*N + feedback)/(N+1) # update empirical mean
-        self.cov[plays] = self.subg_var[plays]/(N+1) # update variances
-        self.N[plays] += 1 # update the counters
-
-        if self.init:
-            self.init = np.sum(self.N<self.init_count) >= 1 # end init. if all arms have been pulled at least init_count times
-
-    def action(self):
-        """
-        Return Oracle(theta_t).
-        """
-        self.t += 1
-        if self.init:
-            theta = (self.N<self.init_count)-1 # ensure that the oracle will pull arms that have not been pulled enough yet.
-        else:
-            theta = np.random.multivariate_normal(self.means, np.diag(self.cov)) # independent prior here
-            theta = np.clip(theta, self.means, self.means + self.sigma*np.sqrt(2*self.delta(self.t)/self.N))
-        return self.oracle.action(theta)
-
-    def reset(self):
-        self.N = np.zeros(len(self.means))
-        self.means = np.copy(self.init_means)
-        self.cov = np.zeros_like(self.cov)
-        self.init = True
-        self.t = 0
 
 ######## ESCB
 
@@ -326,7 +286,7 @@ class ESCBCompleteMatching(BanditAlgo):
         self.t = 0
         self.delta = delta # used for the confidence bound
         self.subg_matrix = cov # subgaussian parameter (1/2 for variables in [0,1], 1 for gaussian with variance 1)
-        if not(np.all(np.linalg.eigvals(cov) >= -1e-20)):
+        if not(np.all(np.linalg.eigvals(cov) >= -1e-7)):
             raise ValueError("The covariance matrix is not positive.")
         self.cov = np.diag(np.inf*np.ones(self.n))
         self.edge_dict = {}

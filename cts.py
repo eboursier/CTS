@@ -25,8 +25,6 @@ class GaussianCombMAB(MAB):
         super().__init__("MultivariateGaussian")
         self.means = means
         self.cov = cov
-        if not(np.all(np.linalg.eigvals(cov) >= -1e-20)):
-            raise ValueError("The covariance matrix is not positive.")
 
     def simu(self, steps=1):
         """

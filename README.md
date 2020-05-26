@@ -1,6 +1,10 @@
 # CTS
 Simulations for "Statistical Efficiency of Thompson Sampling for Combinatorial Semi-Bandits" in collaboration with Pierre Perrault, Michal Valko and Vianney Perchet.
 
+## Required packages
+- networkx 2.4
+- tqdm
+
 ## Run simulations
 To run simulations, first create all the repositories folder1/folder2 with
 		- folder1 in {simulations, figures}
