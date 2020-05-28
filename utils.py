@@ -3,10 +3,11 @@ import numpy as np
 import os
 import networkx as nx
 import time
+import itertools
 
 def potential_paths_from_source_to_target(G, source, target):
     """
-    return the subgraph that only contains the useful edges to connect source to target in a shortest path problem
+    Return only the sub
     """
     G2 = G.copy()
     for (u,v) in G2.edges:
@@ -17,7 +18,7 @@ def potential_paths_from_source_to_target(G, source, target):
         path = nx.dijkstra_path(G2, source, target)
         for i in range(len(path)-1):
             new_edge = (new_edge or G2[path[i]][path[i+1]]['weight']==0) # we visited a new edge
-            G2[path[i]][path[i+1]]['weight'] +=1
+            G2[path[i]][path[i+1]]['weight'] = 1
     for (u,v) in G.edges:
         if G2[u][v]['weight']==0:
             G2.remove_edge(u,v)
@@ -25,6 +26,38 @@ def potential_paths_from_source_to_target(G, source, target):
         if not(nx.has_path(G2, source, n)):
             G2.remove_node(n)
     return G2
+
+def all_maximal_matchings(T):
+    """
+    Return all maximal-cardinality matchings of a graph
+    """
+    maximal_matchings = []
+    partial_matchings = [{(u,v)} for (u,v) in T.edges()]
+    left, right = nx.bipartite.sets(T)
+    max_card = min(len(left), len(right))
+
+    while partial_matchings:
+        # get current partial matching
+        m = partial_matchings.pop()
+        nodes_m = set(itertools.chain(*m))
+
+        extended = False
+        for (u,v) in T.edges():
+            if u not in nodes_m and v not in nodes_m:
+                extended = True
+                # copy m, extend it and add it to the list of partial matchings
+                m_extended = set(m)
+                m_extended.add((u,v))
+                partial_matchings.append(m_extended)
+
+        if not extended and m not in maximal_matchings:
+            maximal_matchings.append(m)
+
+    for s in maximal_matchings:
+        if len(s)<max_card:
+            maximal_matchings.remove(s)
+
+    return maximal_matchings
 
 def simu(mab, rew, oracle, algo, horizon):
     """
