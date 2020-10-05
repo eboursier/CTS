@@ -5,34 +5,37 @@ import networkx as nx
 import time
 import itertools
 
+
 def potential_paths_from_source_to_target(G, source, target):
     """
     Return only the sub
     """
     G2 = G.copy()
-    for (u,v) in G2.edges:
-        G2[u][v]['weight']=0
+    for (u, v) in G2.edges:
+        G2[u][v]['weight'] = 0
     new_edge = True
     while new_edge:
         new_edge = False
         path = nx.dijkstra_path(G2, source, target)
         for i in range(len(path)-1):
-            new_edge = (new_edge or G2[path[i]][path[i+1]]['weight']==0) # we visited a new edge
+            # we visited a new edge
+            new_edge = (new_edge or G2[path[i]][path[i+1]]['weight'] == 0)
             G2[path[i]][path[i+1]]['weight'] = 1
-    for (u,v) in G.edges:
-        if G2[u][v]['weight']==0:
-            G2.remove_edge(u,v)
+    for (u, v) in G.edges:
+        if G2[u][v]['weight'] == 0:
+            G2.remove_edge(u, v)
     for n in G.nodes:
         if not(nx.has_path(G2, source, n)):
             G2.remove_node(n)
     return G2
+
 
 def all_maximal_matchings(T):
     """
     Return all maximal-cardinality matchings of a graph
     """
     maximal_matchings = []
-    partial_matchings = [{(u,v)} for (u,v) in T.edges()]
+    partial_matchings = [{(u, v)} for (u, v) in T.edges()]
     left, right = nx.bipartite.sets(T)
     max_card = min(len(left), len(right))
 
@@ -42,22 +45,23 @@ def all_maximal_matchings(T):
         nodes_m = set(itertools.chain(*m))
 
         extended = False
-        for (u,v) in T.edges():
+        for (u, v) in T.edges():
             if u not in nodes_m and v not in nodes_m:
                 extended = True
                 # copy m, extend it and add it to the list of partial matchings
                 m_extended = set(m)
-                m_extended.add((u,v))
+                m_extended.add((u, v))
                 partial_matchings.append(m_extended)
 
         if not extended and m not in maximal_matchings:
             maximal_matchings.append(m)
 
     for s in maximal_matchings:
-        if len(s)<max_card:
+        if len(s) < max_card:
             maximal_matchings.remove(s)
 
     return maximal_matchings
+
 
 def simu(mab, rew, oracle, algo, horizon):
     """
@@ -66,17 +70,19 @@ def simu(mab, rew, oracle, algo, horizon):
     """
     pulls = []
     reward = np.zeros(horizon)
-    X = mab.simu(steps=horizon) # generated statistics
+    X = mab.simu(steps=horizon)  # generated statistics
 
     for t in range(horizon):
-        plays = algo.action() # arms pulled
-        feedback = rew.feedback(X[t], plays) # semi bandit feedback
-        reward[t] = rew.reward(mab.means, plays) # pseudo reward
+        plays = algo.action()  # arms pulled
+        feedback = rew.feedback(X[t], plays)  # semi bandit feedback
+        reward[t] = rew.reward(mab.means, plays)  # pseudo reward
         algo.update(plays, feedback)  # update algo
         pulls.append(plays)
 
-    baseline = rew.reward(mab.means, oracle.action(mab.means)) # the best achievable reward per timestep
+    # the best achievable reward per timestep
+    baseline = rew.reward(mab.means, oracle.action(mab.means))
     return (np.cumsum(baseline-reward), pulls)
+
 
 def runtime(mab, rew, oracle, algo, horizon):
     """
@@ -90,19 +96,20 @@ def runtime(mab, rew, oracle, algo, horizon):
     except AttributeError:
         check_init = False
     if check_init:
-        X = mab.simu(steps=2*horizon) # generated statistics
+        X = mab.simu(steps=2*horizon)  # generated statistics
     else:
         X = mab.simu(steps=horizon)
-    n=0
-    t=0
+    n = 0
+    t = 0
     actiontime = 0.
     updatetime = 0.
-    while n<horizon: # n is the number of timesteps after the initialization (we do not count the initialisation)
+    # n is the number of timesteps AFTER initialization
+    while n < horizon:
         _actiontime = time.time()
-        plays = algo.action() # arms pulled
+        plays = algo.action()  # arms pulled
         if not(check_init):
             actiontime += time.time() - _actiontime
-        feedback = rew.feedback(X[t], plays) # semi bandit feedback
+        feedback = rew.feedback(X[t], plays)  # semi bandit feedback
         _updatetime = time.time()
         algo.update(plays, feedback)  # update algo
         if not(check_init):
