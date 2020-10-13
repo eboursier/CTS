@@ -96,7 +96,7 @@ def runtime(mab, rew, oracle, algo, horizon):
     except AttributeError:
         check_init = False
     if check_init:
-        X = mab.simu(steps=2*horizon)  # generated statistics
+        X = mab.simu(steps=20*horizon)  # generated statistics
     else:
         X = mab.simu(steps=horizon)
     n = 0

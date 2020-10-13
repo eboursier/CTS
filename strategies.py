@@ -161,17 +161,22 @@ class MultiTSGaussian(BanditAlgo):
     """
     Implement CTS-Gaussian algorithm with multivariate prior.
     Shortest Path problem not implemented in current version.
+    posterior: "bayes", "ellipse" or "app-ellipse". Determine the posterior covariance to use.
+                - "bayes" gives cov = (Gamma^{-1} * N)^{-1} (Bayesian posterior for gaussian distributions of covariance Gamma)
+                - "ellipse" gives cov_ij = Gamma_ij n_ij/(n_i*n_j)
+                - "app-ellipse" gives cov_ij = Gamma_ij/(sqrt(n_i*n_j))
     """
 
     def __init__(self, means, cov, oracle, init_count=1,
-                 sigma=1, clipping=True, optimistic=True,
+                 sigma=1, clipping=True, optimistic=True, path=False,
+                 posterior="ellipse",
                  delta=lambda t: max(1, np.log(t)+3*np.log(np.log(t)))):
         if clipping and optimistic:
-            super().__init__("Clip MultiTS-Gaussian")
+            super().__init__("Clip corrCTS-Gaussian")
         elif optimistic:
-            super().__init__("Optimistic MultiTS-Gaussian")
+            super().__init__("Optimistic corrCTS-Gaussian")
         else:
-            super().__init__("MultiTS-Gaussian")
+            super().__init__("corrCTS-Gaussian")
         self.clipping = clipping
         self.optimistic = optimistic
         self.init_means = means
@@ -179,10 +184,17 @@ class MultiTSGaussian(BanditAlgo):
         self.means = means
         self.cov = np.zeros_like(cov)
         self.oracle = oracle
-        # itialize ends when all arms have been pulled init_count times
-        self.init_count = init_count
+        self.path = path
         self.init = True  # True if we are still initialization
         self.t = 0  # timestep of algo
+        self.posterior = posterior
+
+        if posterior == "bayes":  # store inverse of covariance
+            self.inv_gamma = np.linalg.pinv(cov)
+            self.name += " (Bayes)"
+        if posterior == "app-ellipse":
+            self.name += " (app-ellipse)"
+
         # n_ij is the number of times i,j got played together
         self.N = np.zeros((len(means), len(means)))
         self.delta = delta
@@ -193,27 +205,60 @@ class MultiTSGaussian(BanditAlgo):
         Update the posterior distribution after playing plays and receiving feedback = X[plays]
         """
         play = np.meshgrid(plays, plays)
-        N = self.N[play]
-        self.means[plays] = (self.means[plays]*np.diag(N) +
-                             feedback)/(np.diag(N)+1)  # update empirical mean
-        # update covariance matrix
-        self.cov[play] = self.subg_matrix[play] * \
-            (np.diag(1/(np.diag(N)+1)) @ (N+1) @ np.diag(1/(np.diag(N)+1)))
         self.N[play] += 1  # update the counters
+        N = self.N[play]
+        # update empirical mean
+        self.means[plays] = (self.means[plays]*(np.diag(self.N[play])-1) +
+                             feedback)/(np.diag(self.N[play]))
+
+        # update covariance matrix
+        if self.posterior == "ellipse":
+            self.cov = self.subg_matrix * \
+                (np.diag(1/(np.diag(self.N))) @ (self.N)
+                    @ np.diag(1/(np.diag(self.N))))
+        elif self.posterior == "bayes":
+            self.cov = np.linalg.pinv(self.inv_gamma*self.N)
+        elif self.posterior == "app-ellipse":
+            self.cov = np.diag(1/(np.sqrt(np.diag(self.N)))) @ \
+                self.subg_matrix @ np.diag(1/(np.sqrt(np.diag(self.N))))
+        else:
+            raise ValueError(
+                "posterior must be either bayes, ellipse or app-ellipse")
 
         if self.init:
             # end init. if all arms have been pulled at least init_count times
-            self.init = (np.diag(self.N) < self.init_count).any()
+            self.init = (np.diag(self.N) == 0).any()
 
     def action(self):
         """
         Return Oracle(theta_t).
         """
+        self.t += 1
+
         if self.init:
-            # warning !!!
-            # in some cases, this line does not ensure complete initialization
-            # ensure the oracle pull arms that have not been pulled enough yet.
-            theta = (np.diag(self.N) < self.init_count)+0
+            theta = np.zeros_like(self.means)
+            pulls = (np.diag(self.N) > 0)
+            non_pulls = (np.diag(self.N) == 0)
+            if non_pulls.any():
+                # uniform distrib for arms not pulled yet
+                if self.path:  # means in (-1, 0)
+                    theta[non_pulls] = np.random.uniform(
+                        -1, 0, size=np.sum(non_pulls))
+                else:  # means in (0,1)
+                    theta[non_pulls] = np.random.uniform(
+                        0, 1, size=np.sum(non_pulls))
+            if pulls.any():
+                pulls = np.where(pulls)
+                theta[pulls] = np.random.multivariate_normal(
+                    self.means[pulls], self.cov[np.meshgrid(pulls, pulls)])
+                if self.clipping and self.optimistic:
+                    bound = self.sigma * \
+                        np.sqrt(2*self.delta(self.t)/np.diag(self.N[pulls]))
+                    theta[pulls] = np.clip(theta[pulls], self.means[pulls],
+                                           self.means[pulls] + bound)
+                elif self.optimistic:
+                    theta[pulls] = np.max(
+                        (theta[pulls], self.means[pulls]), axis=0)
         else:
             theta = np.random.multivariate_normal(self.means, self.cov)
             if self.clipping and self.optimistic:
@@ -221,7 +266,7 @@ class MultiTSGaussian(BanditAlgo):
                                 np.sqrt(2*self.delta(self.t)/np.diag(self.N)))
             elif self.optimistic:
                 theta = np.max((theta, self.means), axis=0)
-        self.t += 1
+
         return self.oracle.action(theta)
 
     def reset(self):
@@ -255,8 +300,6 @@ class clipCTSGaussian(BanditAlgo):
         self.init_means = means
         self.means = means
         self.oracle = oracle
-        # itialize ends when all arms have been pulled init_count times
-        self.init_count = init_count
         self.init = True  # True if we are still initialization
         self.t = 0  # timestep of algo
         # n_ij is the number of times i,j got played together
@@ -272,15 +315,15 @@ class clipCTSGaussian(BanditAlgo):
         """
         Update the posterior distribution after playing plays and receiving feedback = X[plays]
         """
-        N = self.N[plays]
-        self.means[plays] = (self.means[plays]*N + feedback) / \
-            (N+1)  # update empirical mean
-        self.cov[plays] = self.subg_var[plays]/(N+1)  # update variances
         self.N[plays] += 1  # update the counters
+        # update empirical mean
+        self.means[plays] = (
+            self.means[plays]*(self.N[plays]-1) + feedback)/(self.N[plays])
+        self.cov = self.subg_var/(self.N)  # update variances
 
         if self.init and not(self.path):
             # end init. if all arms have been pulled at least init_count times
-            self.init = (self.N < self.init_count).any()
+            self.init = (self.N == 0).any()
 
     def action(self):
         """
@@ -288,14 +331,18 @@ class clipCTSGaussian(BanditAlgo):
         """
         self.t += 1
 
-        if self.path:
+        if self.init:  # uniform for non pulled arms
             theta = np.zeros_like(self.means)
-            pulls = (self.N >= self.init_count)
-            non_pulls = (self.N < self.init_count)
+            pulls = (self.N > 0)
+            non_pulls = (self.N == 0)
             if non_pulls.any():
                 # uniform distrib for arms not pulled yet
-                theta[non_pulls] = np.random.uniform(
-                    -1, 0, size=np.sum(non_pulls))
+                if self.path:  # means in (-1, 0)
+                    theta[non_pulls] = np.random.uniform(
+                        -1, 0, size=np.sum(non_pulls))
+                else:  # means in (0,1)
+                    theta[non_pulls] = np.random.uniform(
+                        0, 1, size=np.sum(non_pulls))
             if pulls.any():
                 theta[pulls] = np.random.multivariate_normal(
                     self.means[pulls], np.diag(self.cov[pulls]))
@@ -305,11 +352,8 @@ class clipCTSGaussian(BanditAlgo):
                     theta[pulls] = np.clip(theta[pulls], self.means[pulls],
                                            self.means[pulls] + bound)
                 elif self.optimistic:
-                    theta[pulled_arms] = np.max(
-                        (theta[pulled_arms], self.means[pulled_arms]), axis=0)
-        elif self.init:
-            # ensure the oracle pull arms not pulled enough yet.
-            theta = (self.N < self.init_count)+0
+                    theta[pulls] = np.max(
+                        (theta[pulls], self.means[pulls]), axis=0)
         else:
             theta = np.random.multivariate_normal(
                 self.means, np.diag(self.cov))  # independent prior here
@@ -318,6 +362,7 @@ class clipCTSGaussian(BanditAlgo):
                 theta = np.clip(theta, self.means, self.means + bound)
             elif self.optimistic:
                 theta = np.max((theta, self.means), axis=0)
+
         return self.oracle.action(theta)
 
     def reset(self):
@@ -335,7 +380,7 @@ class MNL(BanditAlgo):
     """
 
     def __init__(self, means, oracle, var, init_count=1,
-                 clipping=False, optimistic=False,
+                 clipping=False, optimistic=False, path=False,
                  delta=lambda t: max(1, np.log(t)+3*np.log(np.log(t)))):
         if clipping and optimistic:
             super().__init__("Clip MNL")
@@ -348,8 +393,7 @@ class MNL(BanditAlgo):
         self.init_means = means
         self.means = means
         self.oracle = oracle
-        # itialize ends when all arms have been pulled init_count times
-        self.init_count = init_count
+        self.path = path
         self.init = True  # True if we are still initialization
         self.t = 0  # timestep of algo
         self.N = np.zeros_like(means)
@@ -368,7 +412,7 @@ class MNL(BanditAlgo):
 
         if self.init:
             # end init. if all arms have been pulled at least init_count times
-            self.init = (self.N < self.init_count).any()
+            self.init = (self.N == 0).any()
 
     def action(self):
         """
@@ -377,8 +421,31 @@ class MNL(BanditAlgo):
         self.t += 1
 
         if self.init:
-            # ensure the oracle pull arms not pulled enough yet.
-            theta = (self.N < self.init_count)+0
+            theta = np.zeros_like(self.means)
+            pulls = (self.N > 0)
+            non_pulls = (self.N == 0)
+            if non_pulls.any():
+                # uniform distrib for arms not pulled yet
+                if self.path:  # means in (-1, 0)
+                    theta[non_pulls] = np.random.uniform(
+                        -1, 0, size=np.sum(non_pulls))
+                else:  # means in (0,1)
+                    theta[non_pulls] = np.random.uniform(
+                        0, 1, size=np.sum(non_pulls))
+            if pulls.any():
+                Z = np.random.normal()
+                # fully correlated prior
+                theta[pulls] = self.means[pulls] + Z * \
+                    np.sqrt(self.var[pulls]/self.N[pulls])
+                if self.clipping and self.optimistic:
+                    bound = self.sigma * \
+                        np.sqrt(2*self.delta(self.t)/self.N[pulls])
+                    theta[pulls] = np.clip(
+                        theta[pulls], self.means[pulls],
+                        self.means[pulls] + bound)
+                elif self.optimistic:
+                    theta[pulls] = np.max(
+                        (theta[pulls], self.means[pulls]), axis=0)
         else:
             Z = np.random.normal()
             # fully correlated prior
