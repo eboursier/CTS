@@ -1,5 +1,5 @@
 # CTS
-Simulations for "Statistical Efficiency of Thompson Sampling for Combinatorial Semi-Bandits" in collaboration with Pierre Perrault, Michal Valko and Vianney Perchet.
+Simulations for [Statistical Efficiency of Thompson Sampling for Combinatorial Semi-Bandits](https://arxiv.org/abs/2006.06613) in collaboration with Pierre Perrault, Michal Valko and Vianney Perchet.
 
 ## Required packages
 - networkx 2.4
@@ -24,7 +24,7 @@ strategies.py provides classes for different algorithms.
 utils.py provides some additional useful functions.
 
 ## Shortest path dataset
-For the shortest path problem, we used the road chesapeake from "The Network Data Repository with Interactive Graph Analytics and Visualization".
+For the shortest path problem, we used the road chesapeake from [The Network Data Repository with Interactive Graph Analytics and Visualization](http://networkrepository.com/road-chesapeake.php).
 
 ## Further info
 If you need the exact data generated in the paper or more information, please do not hesitate to send me an email.
