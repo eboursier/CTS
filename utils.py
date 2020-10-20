@@ -8,7 +8,7 @@ import itertools
 
 def potential_paths_from_source_to_target(G, source, target):
     """
-    Return only the sub
+    Return only the subgraph with paths from source to target
     """
     G2 = G.copy()
     for (u, v) in G2.edges:
@@ -84,42 +84,31 @@ def simu(mab, rew, oracle, algo, horizon):
     return (np.cumsum(baseline-reward), pulls)
 
 
-def runtime(mab, rew, oracle, algo, horizon):
+def runtime(mab, rew, oracle, algo, horizon, initime=100):
     """
     Returns the average time for the algo to compute algo.action() and algo.update().
     """
-    try:
-        if algo.init:
-            check_init = True
-        else:
-            check_init = False
-    except AttributeError:
-        check_init = False
-    if check_init:
-        X = mab.simu(steps=20*horizon)  # generated statistics
-    else:
-        X = mab.simu(steps=horizon)
-    n = 0
-    t = 0
+    X = mab.simu(steps=horizon+initime)
+
     actiontime = 0.
     updatetime = 0.
     # n is the number of timesteps AFTER initialization
-    while n < horizon:
+
+    for t in range(initime):  # do not count initialization steps
+        plays = algo.action()  # arms pulled
+        feedback = rew.feedback(X[t], plays)  # semi bandit feedback
+        algo.update(plays, feedback)  # update algo
+
+    for t in range(initime, initime+horizon):
         _actiontime = time.time()
         plays = algo.action()  # arms pulled
-        if not(check_init):
-            actiontime += time.time() - _actiontime
+        actiontime += time.time() - _actiontime
         feedback = rew.feedback(X[t], plays)  # semi bandit feedback
         _updatetime = time.time()
         algo.update(plays, feedback)  # update algo
-        if not(check_init):
-            updatetime += time.time() - _updatetime
-            n += 1
-        if check_init:
-            check_init = algo.init
-        t += 1
-
-    return actiontime/n, updatetime/n
+        updatetime += time.time() - _updatetime
+        
+    return actiontime/horizon, updatetime/horizon
 
 
 if __name__ == '__main__':

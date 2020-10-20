@@ -157,13 +157,11 @@ class CTSBetaPath(BanditAlgo):
         self.t = 0
 
 
-class MultiTSGaussian(BanditAlgo):
+class CorrelatedPrior(BanditAlgo):
     """
-    Implement CTS-Gaussian algorithm with multivariate prior.
-    Shortest Path problem not implemented in current version.
-    posterior: "bayes", "ellipse" or "app-ellipse". Determine the posterior covariance to use.
-                - "bayes" gives cov = (Gamma^{-1} * N)^{-1} (Bayesian posterior for gaussian distributions of covariance Gamma)
-                - "ellipse" gives cov_ij = Gamma_ij n_ij/(n_i*n_j)
+    Implement CTS-Gaussian algorithm with correlated prior.
+    posterior: "ellipse" or "app-ellipse". Determine the posterior covariance to use.
+                - "ellipse" gives cov_ij = Gamma_ij n_ij/(n_i*n_j) (default choice)
                 - "app-ellipse" gives cov_ij = Gamma_ij/(sqrt(n_i*n_j))
     """
 
@@ -172,11 +170,11 @@ class MultiTSGaussian(BanditAlgo):
                  posterior="ellipse",
                  delta=lambda t: max(1, np.log(t)+3*np.log(np.log(t)))):
         if clipping and optimistic:
-            super().__init__("Clip corrCTS-Gaussian")
+            super().__init__("Clip Correlated Prior")
         elif optimistic:
-            super().__init__("Optimistic corrCTS-Gaussian")
+            super().__init__("Optimistic Correlated Prior")
         else:
-            super().__init__("corrCTS-Gaussian")
+            super().__init__("Correlated Prior")
         self.clipping = clipping
         self.optimistic = optimistic
         self.init_means = means
@@ -188,10 +186,6 @@ class MultiTSGaussian(BanditAlgo):
         self.init = True  # True if we are still initialization
         self.t = 0  # timestep of algo
         self.posterior = posterior
-
-        if posterior == "bayes":  # store inverse of covariance
-            self.inv_gamma = np.linalg.pinv(cov)
-            self.name += " (Bayes)"
         if posterior == "app-ellipse":
             self.name += " (app-ellipse)"
 
@@ -216,14 +210,12 @@ class MultiTSGaussian(BanditAlgo):
             self.cov = self.subg_matrix * \
                 (np.diag(1/(np.diag(self.N))) @ (self.N)
                     @ np.diag(1/(np.diag(self.N))))
-        elif self.posterior == "bayes":
-            self.cov = np.linalg.pinv(self.inv_gamma*self.N)
         elif self.posterior == "app-ellipse":
             self.cov = np.diag(1/(np.sqrt(np.diag(self.N)))) @ \
                 self.subg_matrix @ np.diag(1/(np.sqrt(np.diag(self.N))))
         else:
             raise ValueError(
-                "posterior must be either bayes, ellipse or app-ellipse")
+                "Invalid choice of posterior.")
 
         if self.init:
             # end init. if all arms have been pulled at least init_count times
@@ -373,21 +365,20 @@ class clipCTSGaussian(BanditAlgo):
         self.t = 0
 
 
-class MNL(BanditAlgo):
+class CommonPrior(BanditAlgo):
     """
-    Implement Perfect Correlated Gaussian algorithm with estimation of variance of each arm.
-    Shortest Path problem not implemented in current version.
+    Implement CTS-Gaussian algorithm with a common prior.
     """
 
     def __init__(self, means, oracle, var, init_count=1,
                  clipping=False, optimistic=False, path=False,
                  delta=lambda t: max(1, np.log(t)+3*np.log(np.log(t)))):
         if clipping and optimistic:
-            super().__init__("Clip MNL")
+            super().__init__("Clip Common Prior")
         elif optimistic:
-            super().__init__("Optimistic MNL")
+            super().__init__("Optimistic Common Prior")
         else:
-            super().__init__("MNL")
+            super().__init__("Common Prior")
         self.clipping = clipping
         self.optimistic = optimistic
         self.init_means = means
